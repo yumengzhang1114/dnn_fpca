@@ -41,8 +41,8 @@ def Iter_train(xi_temp,phi_temp,X, args):
     xi_loss=[]
     phi_loss=[]
 
-    xi_hat = xi_temp
-    phi_hat = phi_temp
+    xi_hat = xi_temp.copy()
+    phi_hat = phi_temp.copy()
 
     phi_loss_temp = 100000
     xi_loss_temp = 100000
@@ -82,11 +82,11 @@ def Iter_train(xi_temp,phi_temp,X, args):
         xi_loss_temp=np.sum((xi_hat-xi_temp)**2)/(np.sum(xi_hat**2)+1)
         xi_loss.append(xi_loss_temp)
 
-        phi_hat_save.append(phi_temp)
-        xi_hat_save.append(xi_temp)
+        phi_hat_save.append(phi_temp.copy())
+        xi_hat_save.append(xi_temp.copy())
 
-        phi_hat=phi_temp
-        xi_hat=xi_temp
+        phi_hat=phi_temp.copy()
+        xi_hat=xi_temp.copy()
 
         if iteration==args.max_iter:
             print("Max iteration reaches")
@@ -109,8 +109,8 @@ def Iter_train_data(xi_temp,phi_temp,X,args,coord):
     xi_loss=[]
     phi_loss=[]
 
-    xi_hat = xi_temp
-    phi_hat = phi_temp
+    xi_hat = xi_temp.copy()
+    phi_hat = phi_temp.copy()
 
     phi_loss_temp = 1000000
     xi_loss_temp = 1000000
@@ -150,11 +150,11 @@ def Iter_train_data(xi_temp,phi_temp,X,args,coord):
         xi_loss_temp=np.sum((xi_hat-xi_temp)**2)/(np.sum(xi_hat**2)+1)
         xi_loss.append(xi_loss_temp)
 
-        phi_hat_save.append(phi_temp)
-        xi_hat_save.append(xi_temp)
+        phi_hat_save.append(phi_temp.copy())
+        xi_hat_save.append(xi_temp.copy())
 
-        phi_hat=phi_temp
-        xi_hat=xi_temp
+        phi_hat=phi_temp.copy()
+        xi_hat=xi_temp.copy()
 
         if iteration==args.max_iter:
             print("Max iteration reaches")
