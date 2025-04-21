@@ -38,6 +38,46 @@ def Simulation(args,seed):
 
 def main():
     args = get_args()
+    start_time = time.time()
+
+    if args.seed is not None:
+        set_seed(args.seed)
+
+    device = args.device or ('cuda' if torch.cuda.is_available() else 'cpu')
+    print(device)
+    
+    
+    seed_list = [(2 * i - 1) ** 25 for i in range(1, 51)]
+
+    #seed_list = [6, 7, 8, 9, 10]
+        
+    with ProcessPoolExecutor(max_workers=len(seed_list)) as executor:
+        futures = {}
+        for i, seed in enumerate(seed_list):
+            args_copy = copy.deepcopy(args)
+            args_copy.prefix = f"Simulation{i}"
+            futures[executor.submit(Simulation, args_copy, seed)] = args_copy.prefix
+
+        for future in as_completed(futures):
+            prefix = futures[future]
+            try:
+                xi_hat_save, phi_hat_save, xi_loss, phi_loss = future.result()
+                result = {
+                    "xi_hat_save": xi_hat_save,
+                    "phi_hat_save": phi_hat_save,
+                    "xi_loss": xi_loss,
+                    "phi_loss": phi_loss
+                }
+                save_pickle(result, f'{prefix}_result.pickle')
+                print(f"{prefix} completed.")
+            except Exception as exc:
+                print(f'{prefix} generated an exception: {exc}')
+
+    end_time = time.time()
+    print(f"Total execution time: {(end_time - start_time) / 60:.2f} minutes")
+
+"""def main():
+    args = get_args()
     start_time = time.time()  # Record the start time
     if args.seed is not None:
         set_seed(args.seed)
@@ -56,7 +96,7 @@ def main():
             "xi_loss":xi_loss,"phi_loss":phi_loss}
         save_pickle(result,f'{args.prefix}_result.pickle')
     end_time = time.time()
-    print(f"Total execution time: {(end_time - start_time)/60:.2f} minutes")
+    print(f"Total execution time: {(end_time - start_time)/60:.2f} minutes")"""
 
 if __name__ == '__main__':
     #torch.multiprocessing.set_start_method('spawn')
