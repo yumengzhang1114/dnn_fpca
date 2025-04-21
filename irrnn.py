@@ -195,7 +195,6 @@ class ImageDataset(Dataset):
         return batch
 
 
-# 修改后的 fit 函数，增加可选参数 predict_coord 用于在训练后预测指定坐标
 def fit_pred(value, hidden_widths, activation, lr, batch_size,
         epochs, prefix, coord=None, img_shape=None,
         threshold=None, l2pen=None, device=None, predict_coord=None):
