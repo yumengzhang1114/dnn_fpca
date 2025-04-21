@@ -9,6 +9,7 @@ import pytorch_lightning as pl
 import matplotlib.pyplot as plt
 
 from utils import load_pickle, save_pickle
+from pytorch_lightning.callbacks import EarlyStopping
 
 
 class MetricTracker(pl.Callback):
@@ -30,6 +31,8 @@ class MetricTracker(pl.Callback):
                         elem[ke] = elem[ke].item()
                 else:
                     elem[ke] = float('nan')
+
+
 
 
 def get_model(
@@ -72,8 +75,14 @@ def train_model(
         model = model_class(**model_kwargs)
     dataloader = DataLoader(
             dataset, batch_size=batch_size,
-            shuffle=True)
+            shuffle= True)
     tracker = MetricTracker()
+    early_stop_cb = pl.callbacks.EarlyStopping(
+        monitor="train_mse",
+        mode="min",
+        patience=15,
+        min_delta=1e-15,
+        verbose=False)
     if device is None:
         accelerator = 'gpu' if torch.cuda.is_available() else 'cpu'
     else:
@@ -81,7 +90,7 @@ def train_model(
         accelerator = accelerator_dict[device]
     trainer = pl.Trainer(
             max_epochs=epochs,
-            callbacks=[tracker],
+            callbacks=[tracker, early_stop_cb],
             deterministic=True,
             accelerator=accelerator,
             logger=False,

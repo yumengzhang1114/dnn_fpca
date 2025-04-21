@@ -11,6 +11,9 @@ import pytorch_lightning as pl
 
 from utils import save_image, save_pickle
 from train import get_model as train_load_model
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+
+
 
 
 class SemiHardshrink(nn.Module):
@@ -26,39 +29,34 @@ class SemiHardshrink(nn.Module):
             y = x * self.alpha + y * (1-self.alpha)
         return y
 
-
-#class SemiHardshrink(nn.Module):
-
-    #def __init__(self, lambd, alpha=0.1):
-      #  super().__init__()
-      #  self.alpha = alpha
-     #   self.activation = torch.clamp
-    #def forward(self, x):
-       # y = self.activation(x,-1,1)
-      #  return y
-    
-    
-    
 class MLP(pl.LightningModule):
 
     def __init__(self, widths, activation, lr, shrink=False, l2pen=None):
         activation_dict = {
-                'relu': nn.ReLU(inplace=True),
-                'leaky': nn.LeakyReLU(0.1, inplace=True),
-                'leaky0100': nn.LeakyReLU(0.100, inplace=True),
-                'leaky0010': nn.LeakyReLU(0.010, inplace=True),
-                'swish': nn.SiLU(inplace=True),
-                'sigmoid': nn.Sigmoid(),
-                }
+            'relu': nn.ReLU(inplace=True),
+            'leaky': nn.LeakyReLU(0.1, inplace=True),
+            'leaky0100': nn.LeakyReLU(0.100, inplace=True),
+            'leaky0010': nn.LeakyReLU(0.010, inplace=True),
+            'swish': nn.SiLU(inplace=True),
+            'sigmoid': nn.Sigmoid(),
+        }
         activation_func = activation_dict[activation]
         super().__init__()
         layers = []
-        for i in range(len(widths)-1):
-            n_inp, n_out = widths[i:i+2]
+        for i in range(len(widths) - 1):
+            n_inp, n_out = widths[i:i + 2]
             layers.append(nn.Linear(n_inp, n_out))
-            if i < len(widths)-2:
+            if i < len(widths) - 2:
                 layers.append(activation_func)
         self.net = nn.Sequential(*layers)
+
+        def init_weights(m):
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, nonlinearity='leaky_relu')
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+        self.net.apply(init_weights)
         if shrink:
             self.shrinker = SemiHardshrink(lambd=1.0, alpha=0.1)
         else:
@@ -82,10 +80,10 @@ class MLP(pl.LightningModule):
         else:
             x, threshold = x
         y_pred = self.forward(x, threshold)
-        mse = (torch.abs(y_pred - y)**2).mean()
+        mse = (torch.abs(y_pred - y) ** 2).mean()
         loss = mse
         if self.l2pen is not None:
-            l2 = (y_pred**2).mean()
+            l2 = (y_pred ** 2).mean()
             loss += l2 * self.l2pen / x.shape[0]
             self.log('l2', l2, prog_bar=True)
         # l1 = torch.abs(y_pred).mean()
@@ -104,7 +102,7 @@ class ParalleleNet(pl.LightningModule):
     def __init__(self, widths, lr, **kwargs):
         super().__init__()
         self.nets = nn.ModuleList(
-                [MLP(widths=wid, lr=lr, **kwargs) for wid in widths])
+            [MLP(widths=wid, lr=lr, **kwargs) for wid in widths])
         self.lr = lr
         self.save_hyperparameters()
 
@@ -113,29 +111,63 @@ class ParalleleNet(pl.LightningModule):
             threshold_list = [None for __ in range(len(self.nets))]
         else:
             threshold_list = [
-                    threshold[..., [i]]
-                    for i in range(len(self.nets))]
+                threshold[..., [i]]
+                for i in range(len(self.nets))]
         y = [
-                net(x, threshold_list[i])
-                for i, net, in enumerate(self.nets)]
+            net(x, threshold_list[i])
+            for i, net, in enumerate(self.nets)]
         y = torch.cat(y, -1)
         return y
 
-    def training_step(self, batch, batch_idx):
+    """def training_step(self, batch, batch_idx):
         x, y = batch
         if isinstance(x, torch.Tensor):
             threshold = None
         else:
             x, threshold = x
         y_pred = self.forward(x, threshold)
-        mse = (torch.abs(y_pred - y)**2).mean()
+        mse = (torch.abs(y_pred - y) ** 2).mean()
         loss = mse
         self.log('mse', mse, prog_bar=True)
+        return loss"""
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        if not isinstance(x, torch.Tensor):
+            x, threshold = x
+        else:
+            threshold = None
+
+        y_pred = self.forward(x, threshold)
+        mse = torch.mean((y_pred - y) ** 2)
+        l2_reg = torch.tensor(0., device=mse.device)
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                l2_reg = l2_reg + torch.sum(param ** 2)
+
+        #loss = mse + 1e-10 * l2_reg
+        loss = mse + 0 * l2_reg
+
+        self.log('train_mse', mse, prog_bar=True)
+        self.log('l2_reg', l2_reg, prog_bar=True)
+        self.log('loss', loss, prog_bar=True)
+
         return loss
 
     def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        scheduler = {
+            'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode='min', factor=0.5,
+                patience=10, verbose=True, min_lr=1e-6
+            ),
+            'monitor': 'train_mse'
+        }
+        return {'optimizer': optimizer, 'lr_scheduler': scheduler}
+
+    """def configure_optimizers(self):
         optimizer = Adam(self.parameters(), lr=self.lr)
-        return optimizer
+        return optimizer"""
 
 
 class ImageDataset(Dataset):
@@ -157,9 +189,64 @@ class ImageDataset(Dataset):
     def __getitem__(self, idx):
         if self.threshold is None:
             batch = self.coord[idx], self.value[idx]
+
         else:
             batch = (self.coord[idx], self.threshold[idx]), self.value[idx]
         return batch
+
+
+# 修改后的 fit 函数，增加可选参数 predict_coord 用于在训练后预测指定坐标
+def fit_pred(value, hidden_widths, activation, lr, batch_size,
+        epochs, prefix, coord=None, img_shape=None,
+        threshold=None, l2pen=None, device=None, predict_coord=None):
+    value = value.copy()
+    if coord is not None:
+        coord = normalize_coordinate(coord)
+    dataset = ImageDataset(
+        coord=coord, value=value, img_shape=img_shape,
+        threshold=threshold)
+    if coord is None:
+        img_ndim = len(img_shape)
+    else:
+        img_ndim = coord.shape[-1]
+    widths = (img_ndim,) + hidden_widths + (1,)
+    widths = (widths,) * value.shape[-1]
+    model = train_load_model(
+        model_class=ParalleleNet,
+        model_kwargs=dict(
+            widths=widths,
+            activation=activation,
+            l2pen=l2pen,
+            lr=lr),
+        dataset=dataset, prefix=prefix,
+        batch_size=batch_size, epochs=epochs,
+        load_existing=False, device=device)
+    model.eval()
+    model.to(device)
+
+    # 如果传入了 predict_coord，则在该坐标上预测，否则使用训练集坐标
+    if predict_coord is None:
+        pred_coord = dataset.coord
+    else:
+        pred_coord = normalize_coordinate(predict_coord)
+
+    bs_pred = 10
+    n_batches = (len(pred_coord) + bs_pred - 1) // bs_pred
+    coord_batches = np.array_split(pred_coord, n_batches)
+    coord_batches = [
+        torch.tensor(e, device=model.device, dtype=torch.float32)
+        for e in coord_batches
+    ]
+    if threshold is None:
+        threshold_batches = [None] * n_batches
+    else:
+        threshold_batches = np.array_split(dataset.threshold, n_batches)
+        threshold_batches = [torch.tensor(e, device=model.device) for e in threshold_batches]
+    img_pred = np.concatenate([
+        model.forward(coo, thr).cpu().detach().numpy()
+        for coo, thr in zip(coord_batches, threshold_batches)
+    ])
+    return img_pred
 
 
 def fit(
@@ -167,10 +254,9 @@ def fit(
         hidden_widths, activation, lr, batch_size,
         epochs, prefix,
         coord=None, img_shape=None,
-        threshold=None, l2pen=None, device=None):
+        threshold=None, l2pen=None, device=None, warm_start=False):
 
     value = value.copy()
-
     if coord is not None:
         coord = normalize_coordinate(coord)
 
@@ -192,7 +278,7 @@ def fit(
                 lr=lr),
             dataset=dataset, prefix=prefix,
             batch_size=batch_size, epochs=epochs,
-            load_existing=False, device=device)
+            load_existing=warm_start, device=device)
     model.eval()
 
     model.to(device)
