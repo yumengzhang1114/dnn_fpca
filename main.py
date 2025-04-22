@@ -31,7 +31,7 @@ def main():
 
     data = pd.read_pickle("/Users/yumeng/Desktop/ADNI_MRI_data/ADNI_MRI/svd_results.pickle")
     top3_eigenfunctions = data["top3_eigenfunctions"]
-    phi_temp = top3_eigenfunctions[1].reshape(1, -1)
+    phi_temp = top3_eigenfunctions[0].reshape(1, -1)
 
     print("first eigenfunctions shape:", phi_temp.shape)
     xi_temp = X @ phi_temp.T
